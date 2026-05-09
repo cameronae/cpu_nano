@@ -100,13 +100,64 @@ module Datapath(
     //wires for fowarding b mux
     wire [31:0] fqb;
     wire [1:0] fwdb;
+
+    //wires for branch predict
+    wire rsrtequ; //output of the equ comparator INPUT OF CU 
+    wire [31:0] bpc; //branch pc counter, addr + imm 
+    wire [31:0] jpc; //jump pc counter, just addr
+    wire [31:0] dpc4; //pc + 4 from the id stage
+    wire [31:0] epc8; //pc + 8 from the exe stage = dpc4 + 4
+    wire [31:0] npc; //next pc value after branch predict logic
+    wire [1:0] pcsrc; //pc source select signal from the control unit
+
+    wire [31:0] pc4;        // pc + 4 (combinational, before IF/ID)
+    wire [31:0] epc4;       // dpc4 passed through ID/EXE register
+    wire [4:0]  ern, ern0;  // exe stage dest reg (after jal mux)
+    wire [5:0]  eop;        // exe stage opcode (passed through ID/EXE)
+    wire ejal;       // is current EXE instruction a jal
+    wire [31:0] ealu;       // final ALU/jal result
+    wire stall, wpcir;
+    wire i_rs, i_rt;
+    assign pc4 = pc + 4; //combinational logic for pc + 4
+    
+
+    assign rsrtequ = ~|(fqa ^ fqb); //if qa and qb are equal then rsrtequ is 1 else 0
+    // CU outputs feed INTO these
+    assign npc = (pcsrc == 2'b00) ? pc4  :
+             (pcsrc == 2'b01) ? bpc  :
+             (pcsrc == 2'b10) ? fqa  :
+                                jpc  ;
+    assign bpc = dpc4 + {{14{dinstOut[15]}}, dinstOut[15:0], 2'b00};
+    assign jpc = {dpc4[31:28], dinstOut[25:0], 2'b00};
+
+    assign stall = ewreg & em2reg & (ern != 5'b0) & 
+               ((i_rs & (ern == rs)) | (i_rt & (ern == rt)));
+    assign wpcir = ~stall;
+
+    // i_rs: instructions that read rs
+assign i_rs = (op == 6'h00) | (op == 6'h23) | (op == 6'h2b) |
+              (op == 6'h04) | (op == 6'h05) | (op == 6'h08) |
+              (op == 6'h09) | (op == 6'h0c) | (op == 6'h0d) |
+              (op == 6'h0e) | (op == 6'h02) | (op == 6'h03);
+
+assign i_rt = (op == 6'h00) | (op == 6'h2b) |
+              (op == 6'h04) | (op == 6'h05);
+
+assign stall = ewreg & em2reg & (edestReg != 5'b0) &
+               ((i_rs & (edestReg == rs)) | (i_rt & (edestReg == rt)));
+assign wpcir = ~stall;
+           assign epc8 = epc4 + 4;
+assign ejal = (eop == 6'h03);
+assign ern  = ejal ? 5'd31 : edestReg;  // ern0 is just edestReg
+assign ealu = ejal ? epc8  : r;         // r is your ALU output wire
     //==========================================================================
     // STAGE 1: INSTRUCTION FETCH (IF) - Instantiate modules
     //==========================================================================
     // TODO: Instantiate PC (Program Counter)
     PC pc_inst (
         .clk(clk),
-        .nextpc(nextpc),
+        .nextpc(npc),
+        .wpcir(wpcir),
         .pc(pc)
         );
     // TODO: Instantiate PCAdd4 (PC + 4 Adder)
@@ -122,6 +173,9 @@ module Datapath(
     // TODO: Instantiate IFID (IF/ID Pipeline Register)
     IFID ifid_inst (
     .clk(clk),
+    .pc(pc),
+    .dpc4(dpc4),
+    .pc4(pc4),
     .instOut(instOut),
     .dinstOut(dinstOut)
     );
@@ -137,6 +191,8 @@ module Datapath(
     .m2reg(m2reg),
     .wmem(wmem),
     .aluc(aluc),
+    .rsrtequ(rsrtequ),
+    .pcsrc(pcsrc),
     .aluimm(aluimm),
     .regrt(regrt),
     .rs(rs),
@@ -181,6 +237,9 @@ module Datapath(
     .destReg(destReg),
     .qa(fqa), //forwarding logic
     .qb(fqb), //forwarding logic
+    .op(op), //for branch predict logic
+    .dpc4(dpc4), //for branch target calculation
+    .epc8(epc8), //for branch target calculation
     .imm32(imm32),
     .ewreg(ewreg),
     .em2reg(em2reg),
@@ -214,8 +273,8 @@ module Datapath(
         .ewreg(ewreg),
         .em2reg(em2reg),
         .ewmem(ewmem),
-        .edestReg(edestReg),
-        .r(r),
+        .edestReg(ern),
+        .r(ealu),
         .eqb(eqb),
         .clk(clk),
         .mwreg(mwreg),
@@ -303,6 +362,7 @@ endmodule
 module PC(
     input clk,
     input [31:0] nextpc,
+    input wpcir,
     output reg [31:0] pc
 );
     // TODO: Implement the program counter
@@ -311,7 +371,8 @@ module PC(
     pc = 100;
     end
     always @(posedge clk) begin
-        pc <= nextpc;
+        if(wpcir) //only update if no stall
+            pc <= nextpc;
     end
 endmodule
 
@@ -404,11 +465,17 @@ endmodule
 module IFID(
     input clk,
     input [31:0] instOut,
+    input [31:0] pc4,
+    input wpcir,
+    output [31:0] dpc4,
     output reg [31:0] dinstOut
 );
     // TODO: Implement the IF/ID pipeline register
     always @(posedge clk) begin
-        dinstOut <= instOut; //write the instruction to the output instruction
+        if (wpcir) begin    // only latch if no stall
+            dinstOut <= instOut;
+            dpc4     <= pc4;
+        end
     end
 endmodule
 
@@ -446,6 +513,8 @@ module CU(
     input [4:0] rt,
     input [4:0] edestReg,
     input [4:0] mdestReg,
+    input rsrtequ, //for branch predict logic
+    output reg [1:0] pcsrc, //for branch predict logic
     output reg [1:0] fwda,
     output reg [1:0] fwdb,
     output reg wreg,
@@ -517,6 +586,15 @@ module CU(
         end else begin
             fwdb = 2'b00; 
         end
+
+        if (op == 6'h02 || op == 6'h03)  
+            pcsrc = 2'b11; // j, jal
+        else if (op == 6'h00 && func == 6'h08)         
+            pcsrc = 2'b10; // jr
+        else if ((op == 6'h04 &&  rsrtequ) || (op == 6'h05 && !rsrtequ))
+            pcsrc = 2'b01; // beq/bne taken
+        else  
+            pcsrc = 2'b00; // pc+4
     end
 endmodule
 
@@ -694,39 +772,51 @@ endmodule
 
 module IDEXE(
     input clk,
-    input wreg,
-    input m2reg,
-    input wmem,
+    input stall,          // ADD for bubble injection
+    input wreg, m2reg, wmem,
     input [3:0] aluc,
     input aluimm,
     input [4:0] destReg,
-    input [31:0] qa,
-    input [31:0] qb,
-    input [31:0] imm32,
-    output reg ewreg,
-    output reg em2reg,
-    output reg ewmem,
+    input [31:0] qa, qb, imm32,
+    input [31:0] dpc4,
+    input [5:0] op,       // ADD to pass opcode through
+    output reg ewreg, em2reg, ewmem,
     output reg [3:0] ealuc,
     output reg ealuimm,
     output reg [4:0] edestReg,
-    output reg [31:0] eqa,
-    output reg [31:0] eqb,
-    output reg [31:0] eimm32
+    output reg [31:0] eqa, eqb, eimm32,
+    output reg [31:0] epc4,   // ADD (was wrongly epc8 before)
+    output reg [5:0] eop      // ADD
 );
-    // TODO: Implement the ID/EXE pipeline register
     always @(posedge clk) begin
-        ewreg <= wreg;
-        em2reg <= m2reg;
-        ewmem <= wmem;
-        ealuc <= aluc;
-        ealuimm <= aluimm;
-        edestReg <= destReg;
-        eqa <= qa;
-        eqb <= qb;
-        eimm32 <= imm32;
+        if (stall) begin
+            // inject bubble — zero all state-modifying controls
+            ewreg  <= 0;
+            em2reg <= 0;
+            ewmem  <= 0;
+            ealuc  <= 0;
+            ealuimm <= 0;
+            edestReg <= 0;
+            eqa    <= 0;
+            eqb    <= 0;
+            eimm32 <= 0;
+            epc4   <= 0;
+            eop    <= 0;
+        end else begin
+            ewreg    <= wreg;
+            em2reg   <= m2reg;
+            ewmem    <= wmem;
+            ealuc    <= aluc;
+            ealuimm  <= aluimm;
+            edestReg <= destReg;
+            eqa      <= qa;
+            eqb      <= qb;
+            eimm32   <= imm32;
+            epc4     <= dpc4;   // pass dpc4 forward as epc4
+            eop      <= op;
+        end
     end
 endmodule
-
 //implement the alu mux 
 //if ealuimm is 0 b = eqb else = eimm32
 module ALU_MUX (
