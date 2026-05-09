@@ -179,8 +179,8 @@ module Datapath(
     .aluc(aluc),
     .aluimm(aluimm),
     .destReg(destReg),
-    .qa(qa),
-    .qb(qb),
+    .qa(fqa), //forwarding logic
+    .qb(fqb), //forwarding logic
     .imm32(imm32),
     .ewreg(ewreg),
     .em2reg(em2reg),
@@ -370,12 +370,11 @@ module IM(
     // TODO: Initialize instructions at index 25 and 26
     //LAB 4 init 27 and 28
     initial begin
-    instructions[29] = 32'h004A3020; //hex eq of add $6, $2, $10
-    instructions[28] = 32'h8C25000C; //hex eq of lw $5, 12($1)
-    instructions[27] = 32'h8C240008; // hex eq of lw $4, 08($1)
-    instructions[26] = 32'h8C230004; //hex equivalent of lw $v1, 04($at)
-    instructions[25] = 32'h8C220000; //hex equivalent of lw $v0, 00($at)
-    //new instruciton add 6, 2 10
+   instructions[25] = 32'h00221820; // add $3, $1, $2
+   instructions[26] = 32'h01232022; // sub $4, $9, $3
+   instructions[27] = 32'h00692825; // or  $5, $3, $9
+   instructions[28] = 32'h00693026; // xor $6, $3, $9
+   instructions[29] = 32'h00693824; // and $7, $3, $9  //new instruciton add 6, 2 10
     end
     // TODO: Read instruction based on pc (use pc >> 2 or pc / 4 as index)
     always @(*)begin
@@ -449,7 +448,7 @@ module CU(
     input [4:0] mdestReg,
     output reg [1:0] fwda,
     output reg [1:0] fwdb,
-    output reg wreg,90
+    output reg wreg,
     output reg m2reg,
     output reg wmem,
     output reg [3:0] aluc,
@@ -565,17 +564,17 @@ module Regfile(
     end
 
     initial begin
-        registers[1] = 32'h00000000;
-        registers[2] = 32'hA00000AA;
-        registers[3] = 32'h10000011;
-        registers[4] = 32'h20000022;
-        registers[5] = 32'h30000033;
-        registers[6] = 32'h40000044;
-        registers[7] = 32'h50000055;
-        registers[8] = 32'h60000066;
-        registers[9] = 32'h70000077;
-        registers[10] = 32'h80000088;
-        registers[11] = 32'h90000099;
+        registers[0] = 32'h00000000;
+        registers[1] = 32'hA00000AA;
+        registers[2] = 32'h10000011;
+        registers[3] = 32'h20000022;
+        registers[4] = 32'h30000033;
+        registers[5] = 32'h40000044;
+        registers[6] = 32'h50000055;
+        registers[7] = 32'h60000066;
+        registers[8] = 32'h70000077;
+        registers[9] = 32'h80000088;
+        registers[10] = 32'h90000099;
 
     end
   
