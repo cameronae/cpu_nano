@@ -17,6 +17,8 @@ The modules remain plain Verilog modules and can be compiled together; compile t
 
 This folder belongs to the parent `CPU_DESIGN` Git repository; no separate repository is needed. See [the upgrade plan](docs/upgrade-plan.md) for the prototype issues, proposed instruction subset, and implementation milestones.
 
+The [branch predictor research](docs/branch-predictor.md) recommends a small two-bit counter table after branch resolution and flushing are verified, and describes integration and benchmarking criteria.
+
 ## Current design behavior
 
 - The PC starts at byte address 100.
