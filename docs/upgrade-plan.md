@@ -25,7 +25,10 @@ remain outstanding.
 The audit and proposed milestones below record the original prototype and
 planning decisions; they are not a description of the upgraded RTL.
 
-## Git decision
+## Original Git decision (superseded)
+
+The CPU is now a separate `cpu_nano` repository on `main`. The earlier choice
+below is retained as historical context. See [repository history](repository-history.md).
 
 Keep `final_project` in the existing `CPU_DESIGN` repository. The parent
 repository already contains the lab history and an `origin` remote. A nested

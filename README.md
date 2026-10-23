@@ -1,4 +1,4 @@
-# Five-stage MIPS-style CPU
+# cpu_nano
 
 A 32-bit, single-issue IF / ID / EX / MEM / WB CPU for an educational FPGA
 project targeting the Sipeed Tang Nano 20K and Gowin IDE. The design implements
@@ -63,7 +63,10 @@ include/image paths, resource estimates and realistic next upgrades.
 `make synth` runs an optional Yosys Gowin-family resource estimate; vendor
 place-and-route and physical board validation remain to be done.
 
-This directory remains in the parent `CPU_DESIGN` repository on
-`feature/five-stage-cpu`. Commits are kept separate by functional milestone.
-The [upgrade plan](docs/upgrade-plan.md) records the original prototype audit;
-[branch predictor research](docs/branch-predictor.md) records the initial choice.
+This is the standalone [cpu_nano](https://github.com/cameronae/cpu_nano)
+repository, extracted from `CPU_DESIGN/final_project` with its 12 relevant
+commits preserved on `main`. See [repository history](docs/repository-history.md)
+for provenance and the old-to-new commit mapping. Commits remain separate by
+functional milestone. The [upgrade plan](docs/upgrade-plan.md) records the
+original prototype audit; [branch predictor research](docs/branch-predictor.md)
+records the initial choice.
