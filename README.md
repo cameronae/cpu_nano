@@ -2,8 +2,9 @@
 
 A 32-bit, single-issue IF / ID / EX / MEM / WB CPU for an educational FPGA
 project targeting the Sipeed Tang Nano 20K and Gowin IDE. The design implements
-42 integer instructions: ALU/logic, shifts, immediates, byte/halfword/word memory
-operations, conditional branches, jumps, calls and returns.
+50 integer instructions: ALU/logic, shifts, immediates, byte/halfword/word memory
+operations, conditional branches, jumps, calls, returns, HI/LO and iterative
+signed/unsigned multiply and divide.
 
 The ISA uses MIPS encodings with **no delay slots** and wrapping arithmetic.
 This is an explicitly documented subset, not full MIPS32 compatibility.
@@ -32,6 +33,7 @@ module-filename and unused-signal exclusions.
 - `rtl/if_stage.v`: resettable PC with redirect priority.
 - `rtl/id_stage.v`: complete subset decoder and register file with WB bypass.
 - `rtl/ex_stage.v`: arithmetic, comparison, logic and barrel shifts.
+- `rtl/muldiv.v`: shared iterative multiply/divide, with EX backpressure.
 - `rtl/forwarding.v`: explicit forwarding and load-use hazard detection.
 - `rtl/mem_stage.v`, `rtl/wb_stage.v`: little-endian store/load byte lanes.
 - `rtl/cpu_defs.vh`: shared control encodings.

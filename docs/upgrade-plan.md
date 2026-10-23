@@ -2,8 +2,9 @@
 
 ## Implementation status (2026-10-23)
 
-The core now implements the 42-instruction subset in [the ISA contract](isa.md),
-including byte/halfword memory operations and six conditional branches. Reset,
+The core now implements the 50-instruction subset in [the ISA contract](isa.md),
+including byte/halfword memory operations, six conditional branches, HI/LO and
+iterative signed/unsigned multiply/divide. Reset,
 valid bits, WB/EX forwarding, explicit load-use detection, EX resolution and
 wrong-path squash are implemented. Fixed-latency synchronous memory ports
 replace the hardcoded memories. Directed and seeded random retirement tests

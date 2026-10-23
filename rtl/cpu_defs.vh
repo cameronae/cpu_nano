@@ -12,6 +12,15 @@
 `define ALU_SRL 4'd9
 `define ALU_SRA 4'd10
 `define ALU_LUI 4'd11
+`define HI_NONE 4'd0
+`define HI_MFHI 4'd1
+`define HI_MFLO 4'd2
+`define HI_MTHI 4'd3
+`define HI_MTLO 4'd4
+`define HI_MULT 4'd5
+`define HI_MULTU 4'd6
+`define HI_DIV 4'd7
+`define HI_DIVU 4'd8
 `define BR_NONE 3'd0
 `define BR_EQ   3'd1
 `define BR_NE   3'd2

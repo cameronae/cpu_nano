@@ -8,6 +8,7 @@ module Decode (
     output reg shift, variable_shift, jump, jump_reg, link,
     output reg uses_rs, uses_rt, illegal,
     output reg [3:0] alu_op,
+    output reg [3:0] hilo_op,
     output reg [2:0] branch,
     output reg [1:0] mem_size,
     output reg load_unsigned,
@@ -20,7 +21,7 @@ module Decode (
         reg_write = 0; mem_read = 0; mem_write = 0; alu_imm = 0;
         shift = 0; variable_shift = 0; jump = 0; jump_reg = 0; link = 0;
         uses_rs = 0; uses_rt = 0; illegal = 0;
-        alu_op = `ALU_ADD; branch = `BR_NONE;
+        alu_op = `ALU_ADD; branch = `BR_NONE; hilo_op = `HI_NONE;
         mem_size = `SZ_WORD; load_unsigned = 0;
         destination = instruction[20:16];
         immediate = {{16{instruction[15]}}, instruction[15:0]};
@@ -47,6 +48,14 @@ module Decode (
                     end
                     6'h08: begin jump_reg=1; uses_rs=1; end
                     6'h09: begin jump_reg=1; uses_rs=1; link=1; reg_write=1; end
+                    6'h10: begin hilo_op=`HI_MFHI; reg_write=1; end
+                    6'h12: begin hilo_op=`HI_MFLO; reg_write=1; end
+                    6'h11: begin hilo_op=`HI_MTHI; uses_rs=1; end
+                    6'h13: begin hilo_op=`HI_MTLO; uses_rs=1; end
+                    6'h18: begin hilo_op=`HI_MULT; uses_rs=1; uses_rt=1; end
+                    6'h19: begin hilo_op=`HI_MULTU; uses_rs=1; uses_rt=1; end
+                    6'h1a: begin hilo_op=`HI_DIV; uses_rs=1; uses_rt=1; end
+                    6'h1b: begin hilo_op=`HI_DIVU; uses_rs=1; uses_rt=1; end
                     default: illegal=1;
                 endcase
             end

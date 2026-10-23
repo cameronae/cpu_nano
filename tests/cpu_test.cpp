@@ -25,6 +25,7 @@ struct Reference {
     std::array<uint32_t,32> r{};
     std::array<uint32_t,WORDS> mem{};
     uint32_t pc=0;
+    uint32_t hi=0, lo=0;
     std::array<unsigned,64> ops{}, funcs{};
     struct Result { bool write=false; unsigned dest=0; uint32_t data=0; unsigned fault=0; };
     Result step(uint32_t ins, bool ifault) {
@@ -59,6 +60,20 @@ struct Reference {
                 case 7: wr(uint32_t(int32_t(b)>>(a&31))); break;
                 case 8: control=true; taken=true; next=a; break;
                 case 9: control=true; taken=true; next=a; wr(pc+4); break;
+                case 0x10: wr(hi); break;
+                case 0x12: wr(lo); break;
+                case 0x11: hi=a; break;
+                case 0x13: lo=a; break;
+                case 0x18: case 0x19: {
+                    uint64_t product=fn==0x18 ? uint64_t(int64_t(int32_t(a))*int64_t(int32_t(b))) : uint64_t(a)*b;
+                    hi=uint32_t(product>>32); lo=uint32_t(product); break;
+                }
+                case 0x1a: case 0x1b:
+                    if(b==0) { lo=0xffffffff; hi=a; }
+                    else if(fn==0x1b) { lo=a/b; hi=a%b; }
+                    else if(a==0x80000000 && b==0xffffffff) { lo=a; hi=0; }
+                    else { lo=uint32_t(int32_t(a)/int32_t(b)); hi=uint32_t(int32_t(a)%int32_t(b)); }
+                    break;
                 default: known=false;
                 }
                 break;
@@ -244,6 +259,28 @@ int main(int argc,char** argv) {
         }
         Simulation misjump("misaligned-jr",{I(9,0,1,3),R(1,0,0,0,8),I(0x2b,0,1,132)}); misjump.run();
         Simulation ifault("instruction-access-fault",{J(2,WORDS),I(0x2b,0,1,136)}); ifault.run();
+        // HI/LO RAW dependencies and signed/unsigned multiply/divide boundaries.
+        p={I(9,0,1,-7),R(1,0,0,0,0x11),R(0,0,2,0,0x10),
+           R(2,0,0,0,0x13),R(0,0,3,0,0x12)};
+        std::mt19937 mdgen(42);
+        std::vector<uint32_t> values={0,1,2,7,0x7fffffff,0x80000000,0xffffffff,0xfffffff9};
+        for(unsigned i=0;i<12;i++) values.push_back(mdgen());
+        for(unsigned fn:{0x18u,0x19u,0x1au,0x1bu}) {
+            for(uint32_t a:values) for(uint32_t b:values) {
+                p.push_back(I(0xf,0,1,int(a>>16))); p.push_back(I(0xd,1,1,int(a&65535)));
+                p.push_back(I(0xf,0,2,int(b>>16))); p.push_back(I(0xd,2,2,int(b&65535)));
+                p.push_back(R(1,2,0,0,fn));
+                p.push_back(R(0,0,3,0,0x10)); p.push_back(R(0,0,4,0,0x12));
+                // Keep ROM bounded: independently terminate/test batches.
+                if(p.size()>3500) {
+                    p.push_back(STOP); Simulation md("muldiv-batch",p); md.run(100000); p.clear();
+                }
+            }
+        }
+        p.push_back(STOP); Simulation md("muldiv-final",p); md.run(100000);
+        Simulation loadmd("load-to-muldiv",{I(0x23,0,1,0),I(9,0,2,17),
+            R(1,2,0,0,0x18),R(0,0,3,0,0x12),R(3,2,0,0,0x1b),
+            R(0,0,4,0,0x10),R(0,0,5,0,0x12),STOP}); loadmd.run();
         // Seeded random instruction streams use a completely separate interpreter.
         for(unsigned seed=1;seed<=8;seed++) {
             std::mt19937 gen(seed); p.clear();
@@ -275,6 +312,11 @@ int main(int argc,char** argv) {
         require(!reset.dut.retire_valid && !reset.dut.data_enable,"reset side effects");
         reset.ref=Reference{}; reset.ref.mem=reset.ram; reset.dut.reset=0;
         reset.run();
+        Simulation resetmd("reset-during-multiply",{I(9,0,1,7),R(1,1,0,0,0x18),R(0,0,2,0,0x12),STOP});
+        for(unsigned i=0;i<12;i++) resetmd.tick();
+        resetmd.dut.reset=1; resetmd.tick(false); resetmd.tick(false);
+        resetmd.ref=Reference{}; resetmd.ref.mem=resetmd.ram;
+        resetmd.saw_fault=false; resetmd.dut.reset=0; resetmd.run();
         std::cout<<"All CPU tests passed\n";
     } catch(const std::exception& e) { std::cerr<<"FAIL "<<e.what()<<"\n"; return 1; }
 }

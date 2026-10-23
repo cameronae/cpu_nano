@@ -17,8 +17,9 @@ unmodified binaries that depend on MIPS delay slots are not compatible.
 | Stores | sb, sh, sw |
 | Conditional branches | beq, bne, blez, bgtz, bltz, bgez |
 | Jumps | j, jal, jr, jalr |
+| HI/LO | mfhi, mflo, mthi, mtlo, mult, multu, div, divu |
 
-These are 42 instructions, plus `nop` as `sll $0,$0,0`.
+These are 50 instructions, plus `nop` as `sll $0,$0,0`.
 `$0` always reads zero and ignores writes. All other registers reset to zero.
 The reset PC defaults to byte address zero and is parameterized.
 
@@ -37,11 +38,17 @@ The reset PC defaults to byte address zero and is parameterized.
   instruction is discarded on a taken transfer. There is no delay slot.
 - Use canonical encodings; reserved operand fields are not exhaustively
   validated. Unimplemented opcode/function cases fault instead of acting as nop.
+- HI/LO reset to zero. Multiply and divide use a shared iterative unit that
+  holds EX and younger stages while older instructions drain. Normal operations
+  perform 32 iteration steps plus start/completion handoff cycles; there is no
+  large combinational divide path. Signed division truncates toward zero and
+  the remainder has the dividend's sign. Division by zero deterministically
+  returns LO=0xffffffff, HI=dividend. INT_MIN / -1 returns LO=INT_MIN, HI=0.
+  These exceptional-case choices do not implement MIPS exception semantics.
 
 Not provided: CP0, exception handlers, interrupts, virtual memory, atomics,
 branch-likely/link branch variants, unaligned merge loads/stores, floating
-point, or operating-system support. Multiply/divide and HI/LO are a subsequent
-implementation milestone, not implied by the word "integer" above.
+point, or operating-system support.
 
 ## Five stages and hazards
 
