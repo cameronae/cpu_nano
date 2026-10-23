@@ -1,5 +1,18 @@
 # Five-stage CPU upgrade plan
 
+## Implementation status (2026-10-23)
+
+The core now implements the 42-instruction subset in [the ISA contract](isa.md),
+including byte/halfword memory operations and six conditional branches. Reset,
+valid bits, WB/EX forwarding, explicit load-use detection, EX resolution and
+wrong-path squash are implemented. Fixed-latency synchronous memory ports
+replace the hardcoded memories. Directed and seeded random retirement tests
+compare against a separate C++ interpreter. `make lint`, `make test`, and
+`make smoke` are the verification entry points.
+
+The audit and proposed milestones below record the original prototype and
+planning decisions; they are not a description of the upgraded RTL.
+
 ## Git decision
 
 Keep `final_project` in the existing `CPU_DESIGN` repository. The parent

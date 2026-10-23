@@ -1,43 +1,15 @@
 `timescale 1ns / 1ps
-// RTL modules grouped by pipeline stage/function.
+`include "cpu_defs.vh"
 
-module MEMWB (  
-    input clk,
-    input mwreg,
-    input mm2reg,
-    input [4:0] mdestReg,
-    input [31:0] mr,
-    input [31:0] mdo,
-    output reg wwreg,
-    output reg wm2reg,
-    output reg [4:0] wdestReg,
-    output reg [31:0] wr,
-    output reg [31:0] wdo
+module LoadAlign (
+    input [31:0] word_data,
+    input [1:0] offset, size,
+    input unsigned_load,
+    output [31:0] value
 );
-always @ (posedge clk) begin
-    wwreg <= mwreg;
-    wm2reg <= mm2reg;
-    wdestReg <= mdestReg;
-    wr <= mr;
-    wdo <= mdo;
-end
+    wire [31:0] shifted = word_data >> {offset, 3'b000};
+    assign value = size == `SZ_BYTE ?
+        {{24{!unsigned_load && shifted[7]}}, shifted[7:0]} :
+        size == `SZ_HALF ? {{16{!unsigned_load && shifted[15]}}, shifted[15:0]} :
+        word_data;
 endmodule
-
-
-
-module WB_MUX (
-    input [31:0] wr,
-    input [31:0] wdo,
-    input wm2reg,
-    output reg [31:0] wbData
-);
-
-always @(*) begin
-     if(wm2reg == 0)
-        wbData = wr;
-    else
-        wbData = wdo;  
-end
-endmodule
-
-

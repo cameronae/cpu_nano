@@ -1,180 +1,122 @@
 `timescale 1ns / 1ps
-// RTL modules grouped by pipeline stage/function.
+`include "cpu_defs.vh"
 
-module CU(
-    input [5:0] op,
-    input [5:0] func,
-    input [4:0] rs,
-    input [4:0] rt,
-    input [4:0] edestReg,
-    input [4:0] mdestReg,
-    input rsrtequ, //for branch predict logic
-    output reg [1:0] pcsrc, //for branch predict logic
-    output reg [1:0] fwda,
-    output reg [1:0] fwdb,
-    output reg wreg,
-    output reg m2reg,
-    output reg wmem,
-    output reg [3:0] aluc,
-    output reg aluimm,
-    output reg regrt
+// Decode records exactly which source registers are read, for hazard detection.
+module Decode (
+    input [31:0] instruction,
+    output reg reg_write, mem_read, mem_write, alu_imm,
+    output reg shift, variable_shift, jump, jump_reg, link,
+    output reg uses_rs, uses_rt, illegal,
+    output reg [3:0] alu_op,
+    output reg [2:0] branch,
+    output reg [1:0] mem_size,
+    output reg load_unsigned,
+    output reg [4:0] destination,
+    output reg [31:0] immediate
 );
-    // TODO: Implement the control unit using a case statement
-    always @(*) begin
-        case(op)
-            6'b000000: //r-type
-            begin
-                case (func)
-                    6'b100000: //add instruction 
-                    begin
-                        wreg = 1;
-                        m2reg = 0;
-                        wmem = 0;
-                        aluc = 4'b0010;
-                        aluimm = 0;
-                        regrt = 0;
+    wire [5:0] op = instruction[31:26];
+    wire [5:0] funct = instruction[5:0];
+    always @* begin
+        reg_write = 0; mem_read = 0; mem_write = 0; alu_imm = 0;
+        shift = 0; variable_shift = 0; jump = 0; jump_reg = 0; link = 0;
+        uses_rs = 0; uses_rt = 0; illegal = 0;
+        alu_op = `ALU_ADD; branch = `BR_NONE;
+        mem_size = `SZ_WORD; load_unsigned = 0;
+        destination = instruction[20:16];
+        immediate = {{16{instruction[15]}}, instruction[15:0]};
+        case (op)
+            6'h00: begin
+                destination = instruction[15:11];
+                case (funct)
+                    6'h20, 6'h21: begin reg_write=1; uses_rs=1; uses_rt=1; alu_op=`ALU_ADD; end
+                    6'h22, 6'h23: begin reg_write=1; uses_rs=1; uses_rt=1; alu_op=`ALU_SUB; end
+                    6'h24: begin reg_write=1; uses_rs=1; uses_rt=1; alu_op=`ALU_AND; end
+                    6'h25: begin reg_write=1; uses_rs=1; uses_rt=1; alu_op=`ALU_OR; end
+                    6'h26: begin reg_write=1; uses_rs=1; uses_rt=1; alu_op=`ALU_XOR; end
+                    6'h27: begin reg_write=1; uses_rs=1; uses_rt=1; alu_op=`ALU_NOR; end
+                    6'h2a: begin reg_write=1; uses_rs=1; uses_rt=1; alu_op=`ALU_SLT; end
+                    6'h2b: begin reg_write=1; uses_rs=1; uses_rt=1; alu_op=`ALU_SLTU; end
+                    6'h00, 6'h02, 6'h03, 6'h04, 6'h06, 6'h07: begin
+                        reg_write=1; uses_rt=1; shift=1;
+                        variable_shift=funct[2]; uses_rs=funct[2];
+                        case (funct[1:0])
+                            2'b00: alu_op=`ALU_SLL;
+                            2'b10: alu_op=`ALU_SRL;
+                            default: alu_op=`ALU_SRA;
+                        endcase
                     end
-                default: begin //default case all to 0
-                wreg = 0;
-                m2reg = 0;
-                wmem = 0;
-                aluc = 4'b0000;
-                aluimm = 0;
-                regrt = 0;
-                end
-            endcase             
-           end
-            6'b100011: //LW instruction
-            begin
-                wreg = 1;
-                m2reg = 1;
-                wmem = 0;
-                aluc = 4'b0010;
-                aluimm = 1;
-                regrt = 1;
+                    6'h08: begin jump_reg=1; uses_rs=1; end
+                    6'h09: begin jump_reg=1; uses_rs=1; link=1; reg_write=1; end
+                    default: illegal=1;
+                endcase
             end
-            default: begin
-                wreg = 0;
-                m2reg = 0;
-                wmem = 0;
-                aluc = 4'b0000;
-                aluimm = 0;
-                regrt = 0;
+            6'h08, 6'h09: begin reg_write=1; alu_imm=1; uses_rs=1; end
+            6'h0a: begin reg_write=1; alu_imm=1; uses_rs=1; alu_op=`ALU_SLT; end
+            6'h0b: begin reg_write=1; alu_imm=1; uses_rs=1; alu_op=`ALU_SLTU; end
+            6'h0c, 6'h0d, 6'h0e: begin
+                reg_write=1; alu_imm=1; uses_rs=1;
+                immediate={16'b0,instruction[15:0]};
+                case (op)
+                    6'h0c: alu_op=`ALU_AND;
+                    6'h0d: alu_op=`ALU_OR;
+                    default: alu_op=`ALU_XOR;
+                endcase
             end
+            6'h0f: begin reg_write=1; alu_imm=1; alu_op=`ALU_LUI; end
+            6'h20, 6'h21, 6'h23, 6'h24, 6'h25: begin
+                reg_write=1; mem_read=1; alu_imm=1; uses_rs=1;
+                load_unsigned=op[2];
+                case (op[1:0])
+                    2'b00: mem_size=`SZ_BYTE;
+                    2'b01: mem_size=`SZ_HALF;
+                    default: mem_size=`SZ_WORD;
+                endcase
+            end
+            6'h28, 6'h29, 6'h2b: begin
+                mem_write=1; alu_imm=1; uses_rs=1; uses_rt=1;
+                case (op[1:0])
+                    2'b00: mem_size=`SZ_BYTE;
+                    2'b01: mem_size=`SZ_HALF;
+                    default: mem_size=`SZ_WORD;
+                endcase
+            end
+            6'h04: begin uses_rs=1; uses_rt=1; branch=`BR_EQ; end
+            6'h05: begin uses_rs=1; uses_rt=1; branch=`BR_NE; end
+            6'h06: begin uses_rs=1; branch=`BR_LEZ; illegal=(instruction[20:16]!=0); end
+            6'h07: begin uses_rs=1; branch=`BR_GTZ; illegal=(instruction[20:16]!=0); end
+            6'h01: begin
+                uses_rs=1;
+                case (instruction[20:16])
+                    5'd0: branch=`BR_LTZ;
+                    5'd1: branch=`BR_GEZ;
+                    default: illegal=1;
+                endcase
+            end
+            6'h02: jump=1;
+            6'h03: begin jump=1; link=1; reg_write=1; destination=5'd31; end
+            default: illegal=1;
         endcase
-        //forwarding logic
-        //if rs or rt match destreg then its a stall then forward
-        //if rs or rt match the edestReg then ALU to ALU forward
-       if (rs == edestReg && edestReg != 0) begin
-            fwda = 2'b01; // forward from ALU output
-        end else if (rs == mdestReg && mdestReg != 0) begin
-            fwda = 2'b10; // forward from memory output
-        end else begin
-            fwda = 2'b00; // no forwarding
-        end
-
-        // Forwarding B (rt)
-        if (rt == edestReg && edestReg != 0) begin
-            fwdb = 2'b01; 
-        end else if (rt == mdestReg && mdestReg != 0) begin
-            fwdb = 2'b10; 
-        end else begin
-            fwdb = 2'b00; 
-        end
-
-        if (op == 6'h02 || op == 6'h03)  
-            pcsrc = 2'b11; // j, jal
-        else if (op == 6'h00 && func == 6'h08)         
-            pcsrc = 2'b10; // jr
-        else if ((op == 6'h04 &&  rsrtequ) || (op == 6'h05 && !rsrtequ))
-            pcsrc = 2'b01; // beq/bne taken
-        else  
-            pcsrc = 2'b00; // pc+4
     end
 endmodule
 
-
-
-
-
-module Regfile(
-    input [4:0] rs,
-    input [4:0] rt,
-    input [31:0] wbData,
-    input [4:0] wdestReg,
-    input wwreg,
-    input clk,
-    output reg [31:0] qa,
-    output reg [31:0] qb
+// Same-edge WB->ID bypass avoids dependence on falling-edge register writes.
+module Regfile (
+    input clk, reset,
+    input [4:0] rs, rt, write_reg,
+    input [31:0] write_data,
+    input write_enable,
+    output [31:0] read_a, read_b
 );
-    // TODO: Declare register array
     reg [31:0] registers [0:31];
-    // TODO: Initialize all 32 registers to 0
     integer i;
-    initial begin
-        for(i = 0; i < 32; i = i + 1) begin //iterate through register array and init all to 0
-            registers[i] = 0;
-        end
+    always @(posedge clk) begin
+        if (reset) begin
+            for (i=0; i<32; i=i+1) registers[i] <= 0;
+        end else if (write_enable && write_reg != 0)
+            registers[write_reg] <= write_data;
     end
-
-    initial begin
-        registers[0] = 32'h00000000;
-        registers[1] = 32'hA00000AA;
-        registers[2] = 32'h10000011;
-        registers[3] = 32'h20000022;
-        registers[4] = 32'h30000033;
-        registers[5] = 32'h40000044;
-        registers[6] = 32'h50000055;
-        registers[7] = 32'h60000066;
-        registers[8] = 32'h70000077;
-        registers[9] = 32'h80000088;
-        registers[10] = 32'h90000099;
-
-    end
-  
-    // TODO: Read registers based on rs and rt
-    //qa is rs and qb is rt
-    always @(*) begin
-        qa <= registers[rs];
-        qb <= registers[rt];
-    end
-    //if write back is 1 then set the desired register to the write back data
-    always @(negedge clk) begin
-        if(wwreg == 1)
-            registers[wdestReg] <= wbData;
-    end
+    assign read_a = rs == 0 ? 32'b0 :
+                    (write_enable && write_reg == rs ? write_data : registers[rs]);
+    assign read_b = rt == 0 ? 32'b0 :
+                    (write_enable && write_reg == rt ? write_data : registers[rt]);
 endmodule
-
-
-
-
-module Mux(
-    input [4:0] rd,
-    input [4:0] rt,
-    input regrt,
-    output reg [4:0] destReg
-);
-    // TODO: Implement the multiplexer
-    always @(*) begin
-        if(regrt == 0) 
-            destReg = rd;
-        else
-            destReg = rt;
-    end
-endmodule
-
-
-
-
-module Ext(
-    input [15:0] imm,
-    output reg [31:0] imm32
-);
-    // TODO: Implement sign extension
-    always @(*) begin
-        imm32 = {{16{imm[15]}}, imm}; //concatenates the 15th bit from imm
-    end
-endmodule
-
-
-

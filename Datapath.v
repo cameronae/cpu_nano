@@ -1,307 +1,217 @@
 `timescale 1ns / 1ps
-// Top-level five-stage pipelined CPU datapath.
-// Supporting modules are organized in the rtl/ directory.
-module Datapath(
-    input clk
+`include "cpu_defs.vh"
+
+// Single-issue IF / ID / EX / MEM / WB core. All state uses the rising edge.
+// Memory contract: instruction and data reads return REGISTERED data on the
+// request edge, hold it when disabled, and never add wait states. See docs/isa.md.
+module Datapath #(
+    parameter [31:0] RESET_PC = 0
+) (
+    input clk, reset,
+    output [31:0] instruction_address,
+    output instruction_enable,
+    input [31:0] instruction_data,
+    input instruction_fault,
+    output [31:0] data_address, data_write_data,
+    output data_enable,
+    output [3:0] data_write_strobes,
+    input [31:0] data_read_data,
+    input data_fault,
+    output retire_valid,
+    output [31:0] retire_pc, retire_instruction,
+    output retire_write,
+    output [4:0] retire_destination,
+    output [31:0] retire_data,
+    output [3:0] retire_fault,
+    output reg halted,
+    output reg [3:0] fault_code,
+    output reg [31:0] fault_pc,
+    output load_stall, redirect_event
 );
+    wire [31:0] f_pc;
+    wire [31:0] f_next_pc = f_pc + 32'd4;
+    reg stopped;
 
-    // TODO: Declare wires for IF stage
-    // Hint: You need wires for pc, nextpc, instOut
-    wire [31:0] pc, nextpc, instOut;
-    
-    // TODO: Declare wire for IF/ID pipeline register output
-    // Hint: dinstOut holds the instruction in the ID stage
-    wire [31:0] dinstOut;
-    wire [5:0] op, func;
-    wire[4:0] rs, rt, rd, shamt;
-    wire [15:0] imm;
-    // TODO: Decode instruction fields from dinstOut
-    // Hint: Use assign statements to extract:
-    //   Example: op    = dinstOut[31:26]  (6 bits - opcode)
-    assign op = dinstOut[31:26];
-    assign rs = dinstOut[25:21];
-    assign rt = dinstOut[20:16];
-    assign rd = dinstOut[15:11];
-    assign shamt = dinstOut[10:6];
-    assign func = dinstOut[5:0];
-    assign imm = dinstOut[15:0];
-    
-    // TODO: Declare wires for control unit outputs
-    // Hint: wreg, m2reg, wmem, aluc[3:0], aluimm, regrt
-    wire wreg, m2reg, wmem, aluimm, regrt;
-    wire [3:0] aluc;
-    // TODO: Declare wires for ID stage
-    // Hint: destReg[4:0], qa[31:0], qb[31:0], imm32[31:0]
-    wire [4:0] destReg;
-    wire [31:0] qa, qb, imm32;
-    // TODO: Declare wires for ID/EXE pipeline register outputs
-    // Hint: Use 'e' prefix for EXE stage signals (ewreg, em2reg, etc.)
-    wire ewreg, em2reg, ewmem, ealuimm;
-    wire [3:0] ealuc;
-    wire [4:0] edestReg;
-    wire [31:0] eqa, eqb, eimm32;
+    // IF/ID instruction storage is the synchronous instruction memory output.
+    reg d_valid;
+    reg [31:0] d_pc;
+    wire [31:0] d_instruction = instruction_data;
+    wire [4:0] d_rs = d_instruction[25:21];
+    wire [4:0] d_rt = d_instruction[20:16];
+    wire d_write, d_load, d_store, d_imm, d_shift, d_variable;
+    wire d_jump, d_jr, d_link, d_uses_rs, d_uses_rt, d_illegal, d_unsigned;
+    wire [3:0] d_alu;
+    wire [2:0] d_branch;
+    wire [1:0] d_size;
+    wire [4:0] d_dest;
+    wire [31:0] d_immediate, d_a, d_b;
 
-    //DECLARE wires for ALU MUX
-    wire [31:0] b;
-    
+    // ID/EX state.
+    reg e_valid, e_write, e_load, e_store, e_imm, e_shift, e_variable;
+    reg e_jump, e_jr, e_link, e_unsigned;
+    reg [3:0] e_alu, e_fault;
+    reg [2:0] e_branch;
+    reg [1:0] e_size;
+    reg [4:0] e_rs, e_rt, e_dest;
+    reg [31:0] e_pc, e_instruction, e_a, e_b, e_immediate;
 
-    //DECLARE wires for ALU, other wires already defined
-    //only need add for now but can implement them all in this one
-    wire [31:0] r;
+    // EX/MEM state.
+    reg m_valid, m_write, m_load, m_store, m_unsigned;
+    reg [3:0] m_fault;
+    reg [1:0] m_size;
+    reg [4:0] m_dest;
+    reg [31:0] m_pc, m_instruction, m_result, m_store_value;
 
-    //DECLARE wires for EXEMEM pipelein reg
-    wire mwreg, mm2reg, mwmem;
-    wire [4:0] mdestReg;
-    wire [31:0] mr, mqb;
+    // MEM/WB state. Synchronous data memory output is the load-data register.
+    reg w_valid, w_write, w_load, w_unsigned;
+    reg [3:0] w_fault;
+    reg [1:0] w_size, w_offset;
+    reg [4:0] w_dest;
+    reg [31:0] w_pc, w_instruction, w_result;
+    wire [31:0] w_load_value;
+    wire [31:0] w_value = w_load ? w_load_value : w_result;
+    wire w_enable = w_valid && w_write && w_fault == 0 && !reset;
+    wire m_access_fault = m_valid && m_fault == 0 && (m_load || m_store) && data_fault;
 
-    //DECLARE wires for Data memory
-    wire [31:0] mdo;
-
-    //wires for MEM/WB 
-    wire wwreg, wm2reg;
-    wire [4:0] wdestReg;
-    wire [31:0] wr, wdo;
-
-    //wires for WB mux
-    wire [31:0] wbData;
-
-    //wires for forwarding a mux
-    wire [31:0] fqa;
-    wire [1:0] fwda;
-    //wires for fowarding b mux
-    wire [31:0] fqb;
-    wire [1:0] fwdb;
-
-    //wires for branch predict
-    wire rsrtequ; //output of the equ comparator INPUT OF CU 
-    wire [31:0] bpc; //branch pc counter, addr + imm 
-    wire [31:0] jpc; //jump pc counter, just addr
-    wire [31:0] dpc4; //pc + 4 from the id stage
-    wire [31:0] epc8; //pc + 8 from the exe stage = dpc4 + 4
-    wire [31:0] npc; //next pc value after branch predict logic
-    wire [1:0] pcsrc; //pc source select signal from the control unit
-
-    wire [31:0] pc4;        // pc + 4 (combinational, before IF/ID)
-    wire [31:0] epc4;       // dpc4 passed through ID/EXE register
-    wire [4:0]  ern, ern0;  // exe stage dest reg (after jal mux)
-    wire [5:0]  eop;        // exe stage opcode (passed through ID/EXE)
-    wire ejal;       // is current EXE instruction a jal
-    wire [31:0] ealu;       // final ALU/jal result
-    wire stall, wpcir;
-    wire i_rs, i_rt;
-    assign pc4 = pc + 4; //combinational logic for pc + 4
-    
-
-    assign rsrtequ = ~|(fqa ^ fqb); //if qa and qb are equal then rsrtequ is 1 else 0
-    // CU outputs feed INTO these
-    assign npc = (pcsrc == 2'b00) ? pc4  :
-             (pcsrc == 2'b01) ? bpc  :
-             (pcsrc == 2'b10) ? fqa  :
-                                jpc  ;
-    assign bpc = dpc4 + {{14{dinstOut[15]}}, dinstOut[15:0], 2'b00};
-    assign jpc = {dpc4[31:28], dinstOut[25:0], 2'b00};
-
-    // i_rs: instructions that read rs
-assign i_rs = (op == 6'h00) | (op == 6'h23) | (op == 6'h2b) |
-              (op == 6'h04) | (op == 6'h05) | (op == 6'h08) |
-              (op == 6'h09) | (op == 6'h0c) | (op == 6'h0d) |
-              (op == 6'h0e) | (op == 6'h02) | (op == 6'h03);
-
-assign i_rt = (op == 6'h00) | (op == 6'h2b) |
-              (op == 6'h04) | (op == 6'h05);
-
-assign stall = ewreg & em2reg & (edestReg != 5'b0) &
-               ((i_rs & (edestReg == rs)) | (i_rt & (edestReg == rt)));
-assign wpcir = ~stall;
-           assign epc8 = epc4 + 4;
-assign ejal = (eop == 6'h03);
-assign ern  = ejal ? 5'd31 : edestReg;  // ern0 is just edestReg
-assign ealu = ejal ? epc8  : r;         // r is your ALU output wire
-    //==========================================================================
-    // STAGE 1: INSTRUCTION FETCH (IF) - Instantiate modules
-    //==========================================================================
-    // TODO: Instantiate PC (Program Counter)
-    PC pc_inst (
-        .clk(clk),
-        .nextpc(npc),
-        .wpcir(wpcir),
-        .pc(pc)
-        );
-    // TODO: Instantiate PCAdd4 (PC + 4 Adder)
-    PCAdd4 pcadd4_inst (
-        .pc(pc),
-        .nextpc(nextpc)
-        );
-    // TODO: Instantiate IM (Instruction Memory)        
-    IM im_inst (
-    .pc(pc),
-    .instOut(instOut)
+    Decode decode_inst (
+        .instruction(d_instruction), .reg_write(d_write), .mem_read(d_load),
+        .mem_write(d_store), .alu_imm(d_imm), .shift(d_shift),
+        .variable_shift(d_variable), .jump(d_jump), .jump_reg(d_jr), .link(d_link),
+        .uses_rs(d_uses_rs), .uses_rt(d_uses_rt), .illegal(d_illegal),
+        .alu_op(d_alu), .branch(d_branch), .mem_size(d_size),
+        .load_unsigned(d_unsigned), .destination(d_dest), .immediate(d_immediate)
     );
-    // TODO: Instantiate IFID (IF/ID Pipeline Register)
-    IFID ifid_inst (
-    .clk(clk),
-    .wpcir(wpcir),
-    .dpc4(dpc4),
-    .pc4(pc4),
-    .instOut(instOut),
-    .dinstOut(dinstOut)
-    );
-    //==========================================================================
-    // STAGE 2: INSTRUCTION DECODE (ID) - Instantiate modules
-    //==========================================================================
-    
-    // TODO: Instantiate CU (Control Unit)
-    CU cu_inst (
-    .op(op),
-    .func(func),
-    .wreg(wreg),
-    .m2reg(m2reg),
-    .wmem(wmem),
-    .aluc(aluc),
-    .rsrtequ(rsrtequ),
-    .pcsrc(pcsrc),
-    .aluimm(aluimm),
-    .regrt(regrt),
-    .rs(rs),
-    .rt(rt),
-    .edestReg(edestReg), //GOING TO BE USED FOR FORWARDING IN THE CU, COMPARE TO RS AND RT TO DETECT HAZARDS
-    .mdestReg(mdestReg), //GOING TO BE USED FOR FORWARDING IN THE CU, COMPARE TO RS AND RT TO DETECT HAZARDS
-    .fwda(fwda), //FORWARDING A SELECT SIGNAL
-    .fwdb(fwdb) //FORWARDING B SELECT SIGNAL
-    );
-    // TODO: Instantiate Regfile (Register File)
     Regfile regfile_inst (
-    .rs(rs),
-    .rt(rt),
-    .qa(qa),
-    .qb(qb),
-    .wdestReg(wdestReg),
-        .wbData(wbData),
-        .wwreg(wwreg),
-        .clk(clk)
+        .clk(clk), .reset(reset), .rs(d_rs), .rt(d_rt), .write_reg(w_dest),
+        .write_data(w_value), .write_enable(w_enable), .read_a(d_a), .read_b(d_b)
     );
-    // TODO: Instantiate Mux (Regrt Multiplexer)
-    
-    Mux mux_inst (
-    .rd(rd),
-    .rt(rt),
-    .regrt(regrt),
-    .destReg(destReg)
+    HazardDetection hazards (
+        .decode_valid(d_valid), .uses_rs(d_uses_rs), .uses_rt(d_uses_rt),
+        .decode_rs(d_rs), .decode_rt(d_rt), .execute_valid(e_valid),
+        .execute_load(e_load), .execute_dest(e_dest), .load_use_stall(load_stall)
     );
-    // TODO: Instantiate Ext (Sign Extender)
-    Ext ext_inst (
-    .imm(imm),
-    .imm32(imm32)
+    wire [31:0] e_forward_a, e_forward_b;
+    Forwarding forwarding_inst (
+        .rs(e_rs), .rt(e_rt), .mem_dest(m_dest), .wb_dest(w_dest),
+        .mem_write_reg(m_valid && m_write && m_fault == 0 && !m_access_fault),
+        .mem_load(m_load), .wb_write_reg(w_enable),
+        .operand_a(e_a), .operand_b(e_b), .mem_result(m_result), .wb_result(w_value),
+        .forwarded_a(e_forward_a), .forwarded_b(e_forward_b)
     );
-    // TODO: Instantiate IDEXE (ID/EXE Pipeline Register)
-    IDEXE idexe_inst (
-    .clk(clk),
-    .stall(stall),
-    .wreg(wreg),
-    .m2reg(m2reg),
-    .wmem(wmem),
-    .aluc(aluc),
-    .aluimm(aluimm),
-    .destReg(destReg),
-    .qa(fqa), //forwarding logic
-    .qb(fqb), //forwarding logic
-    .op(op), //for branch predict logic
-    .dpc4(dpc4), //for branch target calculation
-    .epc4(epc4), //passed through for jal link address
-    .imm32(imm32),
-    .ewreg(ewreg),
-    .em2reg(em2reg),
-    .ewmem(ewmem),
-    .ealuc(ealuc),
-    .ealuimm(ealuimm),
-    .edestReg(edestReg),
-    .eqa(eqa),
-    .eqb(eqb),
-    .eimm32(eimm32)
+    wire [31:0] e_alu_a = e_shift ?
+        (e_variable ? {27'b0,e_forward_a[4:0]} : {27'b0,e_instruction[10:6]}) : e_forward_a;
+    wire [31:0] e_alu_b = e_imm ? e_immediate : e_forward_b;
+    wire [31:0] e_alu_result;
+    ALU alu_inst (.a(e_alu_a), .b(e_alu_b), .operation(e_alu), .result(e_alu_result));
+    wire [31:0] e_pc4 = e_pc + 32'd4;
+    wire [31:0] e_result = e_link ? e_pc4 : e_alu_result;
+    wire [31:0] e_branch_target = e_pc4 + (e_immediate << 2);
+    reg e_taken;
+    always @* begin
+        case (e_branch)
+            `BR_EQ: e_taken = e_forward_a == e_forward_b;
+            `BR_NE: e_taken = e_forward_a != e_forward_b;
+            `BR_LEZ: e_taken = $signed(e_forward_a) <= 0;
+            `BR_GTZ: e_taken = $signed(e_forward_a) > 0;
+            `BR_LTZ: e_taken = e_forward_a[31];
+            `BR_GEZ: e_taken = !e_forward_a[31];
+            default: e_taken = 0;
+        endcase
+    end
+    wire [31:0] e_target = e_jr ? e_forward_a :
+        e_jump ? {e_pc4[31:28],e_instruction[25:0],2'b00} : e_branch_target;
+    wire e_transfer = e_jump || e_jr || e_taken;
+    reg [3:0] e_detected_fault;
+    always @* begin
+        e_detected_fault = e_fault;
+        if (e_fault == 0) begin
+            if (e_transfer && e_target[1:0] != 0) e_detected_fault = `FAULT_IF_ALIGN;
+            else if ((e_load || e_store) &&
+                ((e_size == `SZ_WORD && e_result[1:0] != 0) ||
+                 (e_size == `SZ_HALF && e_result[0])))
+                e_detected_fault = e_store ? `FAULT_ST_ALIGN : `FAULT_LD_ALIGN;
+        end
+    end
+    wire e_bad = e_valid && e_detected_fault != 0;
+    assign redirect_event = e_valid && !e_bad && e_transfer && !m_access_fault && !reset;
+    assign instruction_address = f_pc;
+    assign instruction_enable = !reset && !stopped && !load_stall &&
+                                !redirect_event && !e_bad && !m_access_fault;
+    FetchPC #(.RESET_PC(RESET_PC)) fetch_pc (
+        .clk(clk), .reset(reset), .enable(instruction_enable),
+        .redirect(redirect_event), .redirect_pc(e_target),
+        .predicted_next_pc(f_next_pc), .pc(f_pc)
     );
+    assign data_address = m_result;
+    assign data_enable = !reset && m_valid && m_fault == 0 && (m_load || m_store);
+    wire [3:0] store_strobes;
+    StoreAlign store_align (.value(m_store_value), .offset(m_result[1:0]),
+        .size(m_size), .data(data_write_data), .strobes(store_strobes));
+    // The memory must also suppress physical writes when it reports a fault.
+    assign data_write_strobes = data_enable && m_store ? store_strobes : 4'b0;
+    LoadAlign load_align (.word_data(data_read_data), .offset(w_offset),
+        .size(w_size), .unsigned_load(w_unsigned), .value(w_load_value));
+    assign retire_valid = w_valid && !reset;
+    assign retire_pc = w_pc;
+    assign retire_instruction = w_instruction;
+    assign retire_write = w_enable && w_dest != 0;
+    assign retire_destination = w_dest;
+    assign retire_data = w_value;
+    assign retire_fault = w_fault;
 
-    //Instantiate ALU mux
-    ALU_MUX alu_mux_inst (
-        .eqb(eqb),
-        .eimm32(eimm32),
-        .ealuimm(ealuimm),
-        .b(b)
-    );
+    always @(posedge clk) begin
+        if (reset) begin
+            stopped <= 0; halted <= 0; fault_code <= 0; fault_pc <= 0;
+            d_valid <= 0; d_pc <= 0;
+            e_valid <= 0; e_write <= 0; e_load <= 0; e_store <= 0;
+            e_imm <= 0; e_shift <= 0; e_variable <= 0; e_jump <= 0; e_jr <= 0;
+            e_link <= 0; e_unsigned <= 0; e_alu <= 0; e_fault <= 0;
+            e_branch <= 0; e_size <= 0; e_rs <= 0; e_rt <= 0; e_dest <= 0;
+            e_pc <= 0; e_instruction <= 0; e_a <= 0; e_b <= 0; e_immediate <= 0;
+            m_valid <= 0; m_write <= 0; m_load <= 0; m_store <= 0; m_unsigned <= 0;
+            m_fault <= 0; m_size <= 0; m_dest <= 0; m_pc <= 0;
+            m_instruction <= 0; m_result <= 0; m_store_value <= 0;
+            w_valid <= 0; w_write <= 0; w_load <= 0; w_unsigned <= 0;
+            w_fault <= 0; w_size <= 0; w_offset <= 0; w_dest <= 0;
+            w_pc <= 0; w_instruction <= 0; w_result <= 0;
+        end else begin
+            if (w_valid && w_fault != 0) begin
+                halted <= 1; fault_code <= w_fault; fault_pc <= w_pc;
+            end
+            // Older instructions drain even when decode stalls or EX redirects.
+            w_valid <= m_valid; w_write <= m_write; w_load <= m_load;
+            w_unsigned <= m_unsigned; w_size <= m_size; w_offset <= m_result[1:0];
+            w_dest <= m_dest; w_pc <= m_pc; w_instruction <= m_instruction;
+            w_result <= m_result;
+            w_fault <= m_access_fault ? (m_store ? `FAULT_ST_ACCESS : `FAULT_LD_ACCESS) : m_fault;
 
-    //Instantiate ALU
-    ALU alu_inst(
-    .eqa(eqa),
-    .b(b),
-    .ealuc(ealuc),
-    .r(r)
-    );
+            m_valid <= e_valid; m_write <= e_write; m_load <= e_load;
+            m_store <= e_store; m_unsigned <= e_unsigned; m_fault <= e_detected_fault;
+            m_size <= e_size; m_dest <= e_dest; m_pc <= e_pc;
+            m_instruction <= e_instruction; m_result <= e_result; m_store_value <= e_forward_b;
 
-    //Instantiate EXEMEM pipeline reg
-    EXEMEM exemem_inst(
-        .ewreg(ewreg),
-        .em2reg(em2reg),
-        .ewmem(ewmem),
-        .edestReg(ern),
-        .r(ealu),
-        .eqb(eqb),
-        .clk(clk),
-        .mwreg(mwreg),
-        .mm2reg(mm2reg),
-        .mwmem(mwmem),
-        .mdestReg(mdestReg),
-        .mr(mr),
-        .mqb(mqb)
-    );
-
-    //Instantiate Data memory
-    DM dm_inst(
-        .clk(clk),
-        .mr(mr),
-        .mwmem(mwmem),
-        .mqb(mqb),
-        .mdo(mdo)
-    );
-
-    MEMWB memwb_inst (
-        .clk(clk),
-        .mwreg(mwreg),
-        .mm2reg(mm2reg),
-        .mdestReg(mdestReg),
-        .mr(mr),
-        .mdo(mdo),
-        .wwreg(wwreg),
-        .wm2reg(wm2reg),
-        .wdestReg(wdestReg),
-        .wr(wr),
-        .wdo(wdo)
-    );
-
-    WB_MUX wb_mux_inst (
-        .wr(wr),
-        .wdo(wdo),
-        .wm2reg(wm2reg),
-        .wbData(wbData)
-    );
-
-    //Instantiate forwarding muxes
-    FW_MUXA fw_muxa_inst (
-        .qa(qa),    
-        .r(r), //alu output
-        .mr(mr), //excecute output
-        .mdo(mdo),//data mem output
-        .fwda(fwda),
-        .fqa(fqa)
-    );
-    FW_MUXB fw_muxb_inst (
-        .qb(qb),
-        .r(r), //alu output
-        .mr(mr), //excecute output
-        .mdo(mdo),//data mem output
-        .fwdb(fwdb),
-        .fqb(fqb)
-    );
-
+            if (m_access_fault) begin
+                stopped <= 1; d_valid <= 0; e_valid <= 0; m_valid <= 0;
+            end else if (e_bad || redirect_event || stopped) begin
+                if (e_bad) stopped <= 1;
+                d_valid <= 0; e_valid <= 0;
+            end else begin
+                if (load_stall) e_valid <= 0;
+                else begin
+                    e_valid <= d_valid;
+                    e_pc <= d_pc; e_instruction <= d_instruction;
+                    e_write <= d_write; e_load <= d_load; e_store <= d_store;
+                    e_imm <= d_imm; e_shift <= d_shift; e_variable <= d_variable;
+                    e_jump <= d_jump; e_jr <= d_jr; e_link <= d_link;
+                    e_unsigned <= d_unsigned; e_alu <= d_alu; e_branch <= d_branch;
+                    e_size <= d_size; e_rs <= d_rs; e_rt <= d_rt; e_dest <= d_dest;
+                    e_immediate <= d_immediate; e_a <= d_a; e_b <= d_b;
+                    e_fault <= instruction_fault ? `FAULT_IF_ACCESS :
+                        d_pc[1:0] != 0 ? `FAULT_IF_ALIGN :
+                        d_illegal ? `FAULT_ILLEGAL : `FAULT_NONE;
+                end
+                if (instruction_enable) begin d_valid <= 1; d_pc <= f_pc; end
+            end
+        end
+    end
 endmodule
-
-
-

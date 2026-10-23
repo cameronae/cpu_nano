@@ -1,78 +1,51 @@
 `timescale 1ns / 1ps
-//////////////////////////////////////////////////////////////////////////////////
-// Company: Penn State
-// Engineer: [Cameron Reiff]
-// 
-// Create Date: [4/09/2026]
-// Design Name: Lab 4 - Excectution and Memory Access
-// Module Name: testbench
-// Project Name: Lab 4 - Excectution and Memory Access
-// Target Devices: XC7Z010-CLG400-1
-// Description: Testbench for Lab 4 - EXE and MEM stages of pipelined CPU
-// 
-// This testbench verifies the IF and ID stages by:
-//   1. Generating a clock signal
-//   2. Running the simulation for multiple clock cycles
-//   3. Observing the signals in the waveform viewer
-//
-//////////////////////////////////////////////////////////////////////////////////
-
-//==============================================================================
-// TESTBENCH MODULE
-//==============================================================================
-// The testbench instantiates the datapath and provides the clock signal.
-// All internal signals are wired inside the datapath module.
-//
-// To view internal signals in simulation:
-//   1. In Vivado, run behavioral simulation
-//   2. In the waveform viewer, expand the datapath instance (dut)
-//   3. Add the signals you want to observe:
-//      - IF stage: pc, nextpc, instOut
-//      - IF/ID register: dinstOut
-//      - ID stage: op, rs, rt, rd, func, imm
-//      - Control signals: wreg, m2reg, wmem, aluc, aluimm, regrt
-//      - Register file outputs: qa, qb
-//      - Sign extender output: imm32
-//      - ID/EXE register outputs: ewreg, em2reg, ewmem, ealuc, ealuimm,
-//                                  edestReg, eqa, eqb, eimm32
-//
-// Expected behavior:
-//   Cycle 1: PC=100, fetch lw $2, 0($1)
-//   Cycle 2: PC=104, fetch lw $3, 4($1), decode lw $2, 0($1)
-//   Cycle 3: PC=108, decode lw $3, 4($1), execute lw $2, 0($1)
-//   ...
-//==============================================================================
-
-module testbench();
-    
-    //--------------------------------------------------------------------------
-    // Signal Declaration
-    //--------------------------------------------------------------------------
-    // TODO: Declare a reg for the clock signal
-    // Hint: reg clk;
+// Bounded waveform smoke test. Full architectural checking: make test.
+module testbench;
     reg clk;
-    
-    
-    //--------------------------------------------------------------------------
-    // Device Under Test (DUT) Instantiation
-    //--------------------------------------------------------------------------
-    // TODO: Instantiate the datapath module
-    // Hint: The datapath only has clk as input
-    Datapath datapath_inst(.clk(clk));
-    
-    
-    //--------------------------------------------------------------------------
-    // Clock Generation
-    //--------------------------------------------------------------------------
-    // TODO: Initialize the clock to 0
-    // Hint: Use an initial block
-    //
-    initial begin 
-    clk = 0;
+    reg reset;
+    wire [31:0] ia, da, wd;
+    wire ien, den;
+    wire [3:0] strobes;
+    reg [31:0] instruction, read_data;
+    reg [31:0] rom [0:63];
+    reg [31:0] ram [0:63];
+    wire retired, writeback, halted, stalled, redirected;
+    wire [31:0] retired_pc, retired_instruction, retired_data, fault_pc;
+    wire [4:0] dest;
+    wire [3:0] fault, fault_code;
+    integer i;
+    Datapath dut (
+        .clk(clk), .reset(reset), .instruction_address(ia), .instruction_enable(ien),
+        .instruction_data(instruction), .instruction_fault(1'b0),
+        .data_address(da), .data_write_data(wd), .data_enable(den),
+        .data_write_strobes(strobes), .data_read_data(read_data), .data_fault(1'b0),
+        .retire_valid(retired), .retire_pc(retired_pc), .retire_instruction(retired_instruction),
+        .retire_write(writeback), .retire_destination(dest), .retire_data(retired_data),
+        .retire_fault(fault), .halted(halted), .fault_code(fault_code), .fault_pc(fault_pc),
+        .load_stall(stalled), .redirect_event(redirected)
+    );
+    always #5 clk=~clk;
+    always @(posedge clk) begin
+        if(ien) instruction <= ia<256 ? rom[ia[7:2]] : 32'hffffffff;
+        if(den && da<256) begin
+            read_data <= ram[da[7:2]];
+            for(integer lane=0;lane<4;lane=lane+1)
+                if(strobes[lane]) ram[da[7:2]][8*lane +: 8] <= wd[8*lane +: 8];
+        end
     end
-    
-    // TODO: Generate a clock with 10ns period (5ns high, 5ns low)
-    // Hint: Use an always block with #5 delay
-   always #5 clk = ~clk;
-
+    initial begin
+        clk=0; reset=1; instruction=0; read_data=0;
+        for(i=0;i<64;i=i+1) begin rom[i]=32'hffffffff; ram[i]=0; end
+        rom[0]=32'h24010007; // addiu $1,$0,7
+        rom[1]=32'h00211021; // addu $2,$1,$1
+        rom[2]=32'hac020000; // sw $2,0($0)
+        rom[3]=32'h8c030000; // lw $3,0($0)
+        rom[4]=32'h00612023; // subu $4,$3,$1
+        #12 reset=0;
+        #300;
+        if(!halted || fault_code!=1 || fault_pc!=20 || ram[0]!=14)
+            $fatal(1,"Smoke test failed");
+        $display("PASS waveform smoke test");
+        $finish;
+    end
 endmodule
