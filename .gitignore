@@ -3,3 +3,6 @@ obj_dir/
 build/
 *.vcd
 *.fst
+impl/
+*.gprj.user
+*.gprj.lock

@@ -2,7 +2,7 @@ VERILATOR ?= verilator
 RTL := Datapath.v $(wildcard rtl/*.v)
 VFLAGS := -Irtl -Wall -Wno-DECLFILENAME -Wno-UNUSEDSIGNAL
 
-.PHONY: lint test test-all predictor-test smoke
+.PHONY: lint test test-all predictor-test smoke fpga-lint system-test board-test synth programs
 lint:
 	$(VERILATOR) --lint-only $(VFLAGS) --top-module Datapath $(RTL)
 
@@ -41,3 +41,26 @@ smoke:
 	mkdir -p build/sim/smoke
 	$(VERILATOR) --binary --timing --assert $(VFLAGS) --top-module testbench --Mdir build/sim/smoke $(RTL) testbench.v
 	./build/sim/smoke/Vtestbench
+
+fpga-lint:
+	$(VERILATOR) --lint-only $(VFLAGS) --top-module TangNano20K $(RTL) fpga/*.v
+
+system-test: build/sim/system/Vsystem_testbench
+	./build/sim/system/Vsystem_testbench
+
+build/sim/system/Vsystem_testbench: $(RTL) rtl/cpu_defs.vh fpga/cpu_system.v tests/system_testbench.v programs/selftest.hex
+	mkdir -p $(@D)
+	$(VERILATOR) --binary --timing --assert $(VFLAGS) --top-module system_testbench --Mdir build/sim/system $(RTL) fpga/cpu_system.v tests/system_testbench.v
+
+synth:
+	python3 tools/synth.py --target board
+
+board-test: build/sim/board/Vboard_testbench
+	./build/sim/board/Vboard_testbench
+
+build/sim/board/Vboard_testbench: $(RTL) rtl/cpu_defs.vh fpga/cpu_system.v fpga/tang_nano_20k.v tests/board_testbench.v programs/demo.hex
+	mkdir -p $(@D)
+	$(VERILATOR) --binary --timing --assert $(VFLAGS) --top-module board_testbench --Mdir build/sim/board $(RTL) fpga/*.v tests/board_testbench.v
+
+programs:
+	python3 tools/make_programs.py

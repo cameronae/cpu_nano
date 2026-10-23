@@ -108,7 +108,7 @@ module Datapath #(
         (e_variable ? {27'b0,e_forward_a[4:0]} : {27'b0,e_instruction[10:6]}) : e_forward_a;
     wire [31:0] e_alu_b = e_imm ? e_immediate : e_forward_b;
     wire [31:0] e_alu_result;
-    ALU alu_inst (.a(e_alu_a), .b(e_alu_b), .operation(e_alu), .result(e_alu_result));
+    CpuALU alu_inst (.a(e_alu_a), .b(e_alu_b), .operation(e_alu), .result(e_alu_result));
     wire [31:0] e_pc4 = e_pc + 32'd4;
     wire [31:0] e_result = e_link ? e_pc4 :
         e_hilo == `HI_MFHI ? hi : e_hilo == `HI_MFLO ? lo : e_alu_result;

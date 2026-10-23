@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE gowin-fpga-project>
+<Project>
+    <Template>FPGA</Template>
+    <Version>5</Version>
+    <Device name="GW2AR-18C" pn="GW2AR-LV18QN88C8/I7">gw2ar18c-000</Device>
+    <FileList>
+        <File path="Datapath.v" type="file.verilog" enable="1"/>
+        <File path="rtl/branch_predictor.v" type="file.verilog" enable="1"/>
+        <File path="rtl/ex_stage.v" type="file.verilog" enable="1"/>
+        <File path="rtl/forwarding.v" type="file.verilog" enable="1"/>
+        <File path="rtl/id_stage.v" type="file.verilog" enable="1"/>
+        <File path="rtl/if_stage.v" type="file.verilog" enable="1"/>
+        <File path="rtl/mem_stage.v" type="file.verilog" enable="1"/>
+        <File path="rtl/muldiv.v" type="file.verilog" enable="1"/>
+        <File path="rtl/wb_stage.v" type="file.verilog" enable="1"/>
+        <File path="fpga/cpu_system.v" type="file.verilog" enable="1"/>
+        <File path="fpga/tang_nano_20k.v" type="file.verilog" enable="1"/>
+        <File path="fpga/tang_nano_20k.cst" type="file.cst" enable="1"/>
+        <File path="fpga/tang_nano_20k.sdc" type="file.sdc" enable="1"/>
+    </FileList>
+</Project>
