@@ -19,6 +19,9 @@ make lint
 make test
 make test-all
 make smoke
+make fpga-lint
+make system-test
+make board-test
 ```
 
 `make test` compares WB retirement with an independent C++ interpreter and
@@ -52,6 +55,13 @@ performance improvement over bimodal.
 The core has synchronous, fixed-latency memory interfaces. Do not reuse the old
 clock-only instantiation; reset and memory connections are required. No external
 SDRAM controller is included.
+
+For Gowin, open `TangNano20K.gprj` and use top `TangNano20K`. The board wrapper
+includes 4 KiB ROM, 4 KiB RAM, LED MMIO, startup/button reset, pin constraints
+and a 27 MHz clock constraint. See [the FPGA guide](docs/tang-nano-20k.md) for
+include/image paths, resource estimates and realistic next upgrades.
+`make synth` runs an optional Yosys Gowin-family resource estimate; vendor
+place-and-route and physical board validation remain to be done.
 
 This directory remains in the parent `CPU_DESIGN` repository on
 `feature/five-stage-cpu`. Commits are kept separate by functional milestone.

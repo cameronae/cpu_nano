@@ -15,6 +15,13 @@ Selectable 64-entry bimodal/target-buffer prediction and resolved-history
 gshare are implemented, with sequential fetch retained as a baseline.
 `make test-all` verifies all modes and predictor state separately.
 
+The Tang Nano 20K wrapper, synchronous ROM/RAM, LED MMIO, startup/button reset,
+Gowin project and constraints are also provided. `make system-test` checks
+memory/MMIO integration; `make board-test` checks startup and button reset.
+Gowin-family Yosys resource estimates are recorded in
+[the FPGA guide](tang-nano-20k.md); vendor implementation/timing and board tests
+remain outstanding.
+
 The audit and proposed milestones below record the original prototype and
 planning decisions; they are not a description of the upgraded RTL.
 
