@@ -35,7 +35,8 @@ The reset PC defaults to byte address zero and is parameterized.
 - Branch target: PC + 4 + (sign-extended immediate << 2). Jump target:
   {(PC+4)[31:28], instruction[25:0], 2'b00}. jr/jalr use the forwarded `rs`.
 - jal writes PC+4 to `$31`; jalr writes PC+4 to `rd`. Every younger
-  instruction is discarded on a taken transfer. There is no delay slot.
+  instruction on an incorrect path is discarded on a resolved redirect.
+  Correct predictions continue without a squash. There is no delay slot.
 - Use canonical encodings; reserved operand fields are not exhaustively
   validated. Unimplemented opcode/function cases fault instead of acting as nop.
 - HI/LO reset to zero. Multiply and divide use a shared iterative unit that
@@ -58,7 +59,8 @@ point, or operating-system support.
 2. **ID:** decode that instruction, read two registers, identify actual source
    usage, and detect a dependent load in EX. WB has an explicit bypass to ID.
 3. **EX:** select forwarded register operands, execute the ALU, calculate memory
-   addresses, and resolve control transfers. EX/MEM forwarding has priority
+   addresses, and resolve control transfers against their saved predictions.
+   EX/MEM forwarding has priority
    over MEM/WB. The address of a load is never forwarded as loaded data.
 4. **MEM:** issue a synchronous RAM read or byte-enabled store. The RAM read
    output registers at the edge leading into WB.
@@ -71,6 +73,15 @@ keeps ID metadata, and injects an invalid bubble into EX. Store payloads, branch
 comparisons, and register-jump targets all use forwarded values. Reset and
 older faults override younger work. A resolved transfer overrides a younger
 load-use stall. IF/ID and ID/EX valid bits squash wrong-path instructions.
+
+`PREDICTOR=0` selects sequential fetch, `1` (default) selects a 64-entry bimodal
+two-bit counter table plus tagged target buffer, and `2` selects six-bit
+resolved-history gshare with the same target buffer. Predictions are made from
+PC alone, alongside the synchronous instruction request. Fetch saves the
+predicted next PC and counter index through ID/EX. EX checks the actual next
+PC for every instruction, including non-branches, and redirects on a mismatch.
+Only valid, non-faulting resolved control transfers train the predictor.
+See [the predictor notes](branch-predictor.md) for state and recovery details.
 
 Hazard detection is combinational control across stages, not an extra pipeline
 stage. Splitting decode or fetch is only useful if timing reports show a long

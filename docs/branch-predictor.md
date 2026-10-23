@@ -1,5 +1,51 @@
 # Branch predictor recommendation
 
+## Implemented update (2026-10-23)
+
+The core now has selectable prediction: `PREDICTOR=0` disables it, `1` is the
+default 64-entry bimodal predictor, and `2` selects six-bit resolved-history
+gshare. Both dynamic modes have a 64-entry direct-mapped tagged target buffer
+so that prediction works alongside the synchronous instruction-memory request.
+Each target slot has a valid bit, 24-bit PC tag, 30-bit aligned target, and
+conditional bit. The direction table has 64 two-bit counters initialized to
+weakly not taken. Raw table storage is 3,712 bits, plus six history bits for
+gshare, excluding pipeline metadata and implementation overhead.
+
+The target index is PC[7:2]. Bimodal uses that index for direction; gshare XORs
+it with the current history. Save the lookup index and predicted next PC at
+fetch. Update the saved counter index once on valid EX branch resolution;
+allocate/update targets for conditional branches and jumps. Conditional
+branches alone train direction/history. Gshare history advances at resolution,
+not speculative fetch, so it needs no history rollback but can miss recent
+in-flight correlations. Indirect jumps use their last resolved target.
+
+EX compares predicted and actual next PC for every valid instruction, including
+non-branches, and recovers by flushing younger stages. Older MEM faults override
+prediction/training and reset clears validity/counters/history. Stalls retain
+prediction metadata. Simultaneous lookup/update observes pre-edge state for
+the accepted fetch.
+
+`make test-all` compares all three configurations with the same independent
+architectural model. Standalone predictor tests cover saturation, tag misses,
+counter/target aliasing, updates and reset. Bimodal remains the default: a
+simple 100-iteration loop needs fewer cycles than with gshare while gshare
+warms its history. This is a directed example, not a general workload ranking.
+
+Measured `loop-benchmark` in `tests/cpu_test.cpp` (2026-10-23):
+
+| Mode | Active clock cycles to halt | Retired records | EX next-PC corrections |
+| --- | ---: | ---: | ---: |
+| Sequential | 404 | 202 | 99 |
+| Bimodal | 210 | 202 | 2 |
+| Gshare | 222 | 202 | 8 |
+
+The records include the final unsupported-instruction fault. Cycle counts
+exclude setup reset and the post-halt drain check. No FPGA frequency result
+is implied; a predictor can reduce cycles while extending the clock path.
+
+The original research and proposed choices below are retained as rationale;
+the previous combinational-ROM suggestion no longer describes the memory path.
+
 Research date: 2026-10-08. This is a proposed design, not implemented RTL or a
 measured performance claim. Keep the existing repository and implement on
 `feature/five-stage-cpu` after the correctness milestones in

@@ -5,7 +5,8 @@
 // Memory contract: instruction and data reads return REGISTERED data on the
 // request edge, hold it when disabled, and never add wait states. See docs/isa.md.
 module Datapath #(
-    parameter [31:0] RESET_PC = 0
+    parameter [31:0] RESET_PC = 0,
+    parameter PREDICTOR = 1
 ) (
     input clk, reset,
     output [31:0] instruction_address,
@@ -29,12 +30,14 @@ module Datapath #(
     output load_stall, redirect_event
 );
     wire [31:0] f_pc;
-    wire [31:0] f_next_pc = f_pc + 32'd4;
+    wire [31:0] f_next_pc;
+    wire [5:0] f_prediction_index;
     reg stopped;
 
     // IF/ID instruction storage is the synchronous instruction memory output.
     reg d_valid;
-    reg [31:0] d_pc;
+    reg [31:0] d_pc, d_predicted_next_pc;
+    reg [5:0] d_prediction_index;
     wire [31:0] d_instruction = instruction_data;
     wire [4:0] d_rs = d_instruction[25:21];
     wire [4:0] d_rt = d_instruction[20:16];
@@ -54,6 +57,8 @@ module Datapath #(
     reg [1:0] e_size;
     reg [4:0] e_rs, e_rt, e_dest;
     reg [31:0] e_pc, e_instruction, e_a, e_b, e_immediate;
+    reg [31:0] e_predicted_next_pc;
+    reg [5:0] e_prediction_index;
 
     // EX/MEM state.
     reg m_valid, m_write, m_load, m_store, m_unsigned;
@@ -148,13 +153,25 @@ module Datapath #(
         end
     end
     wire e_bad = e_valid && e_detected_fault != 0;
-    assign redirect_event = e_valid && !e_bad && e_transfer && !m_access_fault && !reset;
+    wire [31:0] e_actual_next_pc = e_transfer ? e_target : e_pc4;
+    // Check every instruction, so stale BTB predictions of non-branches recover.
+    assign redirect_event = e_valid && !e_bad && !execute_hold &&
+        e_actual_next_pc != e_predicted_next_pc && !m_access_fault && !reset;
+    BranchPredictor #(.MODE(PREDICTOR)) predictor_inst (
+        .clk(clk), .reset(reset), .fetch_pc(f_pc), .predicted_next_pc(f_next_pc),
+        .prediction_index(f_prediction_index),
+        .update(e_valid && !e_bad && !execute_hold && !m_access_fault && !stopped &&
+                (e_branch != `BR_NONE || e_jump || e_jr)),
+        .resolved_pc(e_pc), .resolved_target(e_target),
+        .resolved_conditional(e_branch != `BR_NONE), .resolved_taken(e_taken),
+        .resolved_index(e_prediction_index)
+    );
     assign instruction_address = f_pc;
     assign instruction_enable = !reset && !stopped && !load_stall && !execute_hold &&
                                 !redirect_event && !e_bad && !m_access_fault;
     FetchPC #(.RESET_PC(RESET_PC)) fetch_pc (
         .clk(clk), .reset(reset), .enable(instruction_enable),
-        .redirect(redirect_event), .redirect_pc(e_target),
+        .redirect(redirect_event), .redirect_pc(e_actual_next_pc),
         .predicted_next_pc(f_next_pc), .pc(f_pc)
     );
     assign data_address = m_result;
@@ -179,6 +196,8 @@ module Datapath #(
             stopped <= 0; halted <= 0; fault_code <= 0; fault_pc <= 0;
             hi <= 0; lo <= 0; e_hilo <= 0;
             d_valid <= 0; d_pc <= 0;
+            d_predicted_next_pc <= 0; d_prediction_index <= 0;
+            e_predicted_next_pc <= 0; e_prediction_index <= 0;
             e_valid <= 0; e_write <= 0; e_load <= 0; e_store <= 0;
             e_imm <= 0; e_shift <= 0; e_variable <= 0; e_jump <= 0; e_jr <= 0;
             e_link <= 0; e_unsigned <= 0; e_alu <= 0; e_fault <= 0;
@@ -224,6 +243,8 @@ module Datapath #(
                 else begin
                     e_valid <= d_valid;
                     e_pc <= d_pc; e_instruction <= d_instruction;
+                    e_predicted_next_pc <= d_predicted_next_pc;
+                    e_prediction_index <= d_prediction_index;
                     e_write <= d_write; e_load <= d_load; e_store <= d_store;
                     e_imm <= d_imm; e_shift <= d_shift; e_variable <= d_variable;
                     e_jump <= d_jump; e_jr <= d_jr; e_link <= d_link;
@@ -235,7 +256,10 @@ module Datapath #(
                         d_pc[1:0] != 0 ? `FAULT_IF_ALIGN :
                         d_illegal ? `FAULT_ILLEGAL : `FAULT_NONE;
                 end
-                if (instruction_enable) begin d_valid <= 1; d_pc <= f_pc; end
+                if (instruction_enable) begin
+                    d_valid <= 1; d_pc <= f_pc;
+                    d_predicted_next_pc <= f_next_pc; d_prediction_index <= f_prediction_index;
+                end
             end
         end
     end

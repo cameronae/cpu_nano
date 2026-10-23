@@ -17,6 +17,7 @@ Requires Verilator, Make, and a C++ compiler:
 ```sh
 make lint
 make test
+make test-all
 make smoke
 ```
 
@@ -27,6 +28,13 @@ fault handling, reset, and eight reproducible randomized instruction streams.
 files live in ignored `build/`; lint warnings are errors apart from deliberate
 module-filename and unused-signal exclusions.
 
+`make test-all` repeats architectural tests with prediction disabled, bimodal
+prediction (default), and gshare, and tests predictor counters/tags separately.
+Select with the core's `PREDICTOR` parameter: 0, 1, or 2. Both dynamic options
+use a 64-entry tagged target buffer and two-bit direction counters. Gshare
+uses six bits of resolved branch history; it is an experiment, not an assumed
+performance improvement over bimodal.
+
 ## RTL organization
 
 - `Datapath.v`: core interface, stage registers, squash, fault and control flow.
@@ -34,6 +42,7 @@ module-filename and unused-signal exclusions.
 - `rtl/id_stage.v`: complete subset decoder and register file with WB bypass.
 - `rtl/ex_stage.v`: arithmetic, comparison, logic and barrel shifts.
 - `rtl/muldiv.v`: shared iterative multiply/divide, with EX backpressure.
+- `rtl/branch_predictor.v`: selectable bimodal/gshare direction and tagged targets.
 - `rtl/forwarding.v`: explicit forwarding and load-use hazard detection.
 - `rtl/mem_stage.v`, `rtl/wb_stage.v`: little-endian store/load byte lanes.
 - `rtl/cpu_defs.vh`: shared control encodings.

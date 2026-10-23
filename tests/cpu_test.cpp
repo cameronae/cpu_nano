@@ -192,11 +192,13 @@ struct Simulation {
         dut.eval(); cycles++;
     }
     void run(unsigned limit=30000) {
+        const unsigned start_cycles=cycles;
         while(!dut.halted && cycles<limit) tick();
+        const unsigned execution_cycles=cycles-start_cycles;
         require(dut.halted && saw_fault,name+": timeout/no fault retirement");
         for(unsigned i=0;i<WORDS;i++) require(ram[i]==ref.mem[i],name+": memory mismatch word "+std::to_string(i));
         for(unsigned i=0;i<8;i++) tick();
-        std::cout<<"PASS "<<name<<" cycles="<<cycles<<" retired="<<retired
+        std::cout<<"PASS "<<name<<" cycles="<<execution_cycles<<" retired="<<retired
                  <<" load-stalls="<<stalls<<" redirects="<<redirects<<"\n";
     }
 };
@@ -252,6 +254,12 @@ int main(int argc,char** argv) {
         p.push_back(I(0x23,0,16,112)); p.push_back(I(4,16,13,1));
         p.push_back(I(0x2b,0,2,120)); p.push_back(STOP);
         Simulation branches("control-flow",p); branches.run();
+        Simulation loopbench("loop-benchmark",{I(9,0,1,100),I(9,1,1,-1),I(5,1,0,-2),STOP});
+        loopbench.run();
+        // A frequently-taken branch eventually exits: younger load-use work
+        // must not prevent the correction from the older EX branch.
+        Simulation recover("prediction-recovery",{I(9,0,1,20),I(9,1,1,-1),I(5,1,0,-2),
+            I(0x23,0,2,0),R(2,2,3,0,0x21),I(0x2b,0,3,256),STOP}); recover.run();
         // Faults must drain older work and suppress younger stores.
         for(auto instruction: {I(0x23,0,1,1),I(0x29,0,1,1),I(0x23,0,1,WORDS*4),
                              I(0x2b,0,1,WORDS*4),uint32_t(0xfc000000)}) {
@@ -281,6 +289,8 @@ int main(int argc,char** argv) {
         Simulation loadmd("load-to-muldiv",{I(0x23,0,1,0),I(9,0,2,17),
             R(1,2,0,0,0x18),R(0,0,3,0,0x12),R(3,2,0,0,0x1b),
             R(0,0,4,0,0x10),R(0,0,5,0,0x12),STOP}); loadmd.run();
+        Simulation adjacentmd("adjacent-load-to-muldiv",{I(0x23,0,1,0),
+            R(1,1,0,0,0x18),R(0,0,3,0,0x12),STOP}); adjacentmd.run();
         // Seeded random instruction streams use a completely separate interpreter.
         for(unsigned seed=1;seed<=8;seed++) {
             std::mt19937 gen(seed); p.clear();

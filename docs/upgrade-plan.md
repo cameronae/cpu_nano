@@ -11,6 +11,10 @@ replace the hardcoded memories. Directed and seeded random retirement tests
 compare against a separate C++ interpreter. `make lint`, `make test`, and
 `make smoke` are the verification entry points.
 
+Selectable 64-entry bimodal/target-buffer prediction and resolved-history
+gshare are implemented, with sequential fetch retained as a baseline.
+`make test-all` verifies all modes and predictor state separately.
+
 The audit and proposed milestones below record the original prototype and
 planning decisions; they are not a description of the upgraded RTL.
 
